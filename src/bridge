@@ -1,5 +1,4 @@
 #!/bin/sh
-## trap "set +x; sleep 5; set -x" DEBUG
 
 # Touch screen Kindle Jailbreak Bridge
 #
@@ -43,7 +42,7 @@ EIPS_BOT=35             # Just above S.O. bar
 EIPS_HALF=25            # Characters either side of center
 EIPS_OFF=0              # Left hand unusable column(s)
 EIPS_POS=${EIPS_TOP}    # Next line to use
-CLEAR=$(dd if=/dev/zero bs=1 count=50 2>/dev/null  | tr '\0' '_')
+CLEAR=$(dd if=/dev/zero bs=1 count=50 2>/dev/null  | tr '\0' ' ')
 
 set_OSD() {
     # For those who want a computed length string in Busybox ash:
