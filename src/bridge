@@ -165,7 +165,7 @@ local rdev
             # touch screen model, prior to KOA2, running from "Diags" partition
             mount -o rw '/dev/mmcblk0p1' "${ROOT}" 
             logmsg "I" "mount_root_rw" "" "Running from $rdev, mounting /dev/mmcblk0p1 rw"
-            print_centered " Diag OS ${1} "
+            print_centered " Diag OS $rdev "
          ;;
 
         * ) # in which case, punt - Should never reach this point
