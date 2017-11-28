@@ -1,341 +1,305 @@
 #!/bin/sh
-#
-# Kindle Touch/PaperWhite JailBreak Bridge
+## trap "set +x; sleep 5; set -x" DEBUG
+
+# Touch screen Kindle Jailbreak Bridge
 #
 # $Id: bridge.sh 13346 2016-07-11 17:26:56Z NiLuJe $
-#
-##
+# 2017-11-23 knc1
+VER='1.16'
 
-ROOT=""
+# Model - original KT is an exception
 IS_TOUCH="false"
-IS_PW="false"
-IS_PW2="false"
-IS_KV="false"
-IS_KT2="false"
-IS_PW3="false"
-IS_KOA="false"
-IS_KT3="false"
-K5_ATLEAST_54="false"
-MKK_PERSISTENT_STORAGE="/var/local/mkk"
-RP_PERSISTENT_STORAGE="/var/local/rp"
-VARLOCAL_OOS="false"
+
+# Firmware - older than 5.4 is an exception
+K5_ATLEAST_54="true"
+
+# At the moment, only the 2017 Oasis does not have a 'Diags' partition
+HAS_DIAGS="true"
+
+# Alternate fs root, non-KOA2 only
+ROOT=""
+
+# Backup copies
+psMKK="/var/local/mkk"
+psRP="/var/local/rp"
 
 # Pull some helper functions for logging
 source /etc/upstart/functions
-
 LOG_DOMAIN="jb_bridge"
 
-logmsg()
-{
-	f_log "${1}" "${LOG_DOMAIN}" "${2}" "${3}" "${4}"
+# Defaults based on:
+## EIPS_MAXCHARS="$((${SCREEN_X_RES} / ${EIPS_X_RES}))"
+## EIPS_MAXLINES="$((${SCREEN_Y_RES} / ${EIPS_Y_RES}))"
+
+# Kindle Touch with 5.3.7.3
+# SCREEN_X_RES=600      # Confirmed
+# SCREEN_Y_RES=800      # Confirmed
+# EIPS_X_RES=12         # 12 Confirmed
+# EIPS_Y_RES=20         # 20 Confirmed
+EIPS_MAXCHARS=50        # 0..49 Confirmed
+EIPS_MAXLINES=40        # 0..39 Confirmed
+EIPS_TOP=5              # Just below menu bar
+EIPS_BOT=35             # Just above S.O. bar
+EIPS_HALF=25            # Characters either side of center
+EIPS_OFF=0              # Left hand unusable column(s)
+EIPS_POS=${EIPS_TOP}    # Next line to use
+CLEAR=$(dd if=/dev/zero bs=1 count=50 2>/dev/null  | tr '\0' '_')
+
+set_OSD() {
+    # For those who want a computed length string in Busybox ash:
+    CLEAR=$(dd if=/dev/zero bs=1 count=${EIPS_MAXCHARS} 2>/dev/null  | tr '\0' ' ')
+    eips -c
+    # Wait for the screen to clear
+    sleep 1
 }
 
-RW=""
-mount_rw() {
-	if [ -z "${RW}" ] ; then
-		RW="yes"
-		mount -o rw,remount /
-	fi
+# Screen constants for message positioning
+
+# KOA2
+set_1264_1680() {
+#    SCREEN_X_RES=1264
+#    SCREEN_Y_RES=1680
+    # Attempt an educated guess at these
+#    EIPS_X_RES=16
+#    EIPS_Y_RES=24
+    EIPS_MAXCHARS=66
+    EIPS_MAXLINES=68
+    EIPS_HALF=33
+    set_OSD
 }
 
-mount_ro() {
-	if [ -n "${RW}" ] ; then
-		RW=""
-		mount -o ro,remount /
-	fi
+# KV, PW3, KOA
+set_1072_1448() {       # PW3-5.9.2
+#    SCREEN_X_RES=1072  # 1072 Confirmed
+#    SCREEN_Y_RES=1448  # 1448 Confirmed
+#    EIPS_X_RES=15      # 15 Confirmed - YES, 15, not 16 (???)
+#    EIPS_Y_RES=24      # 24 Confirmed
+    EIPS_MAXCHARS=67    # Positions 0..67 Confirmed, Lab126 has off-by-one-error
+    EIPS_MAXLINES=60    # Positions 0..59 Confirmed
+    EIPS_HALF=33
+    EIPS_OFF=1
+    set_OSD
 }
 
-mount_root_rw()
-{
-	# Check if we're running from main...
-	DEV="$(rdev | awk '{ print $1 }')"
-	# Don't do something stupid if rdev is missing for some reason...
-	if [ "${DEV}" != "/dev/mmcblk2p5" -a -n "${DEV}" ] ; then
-		ROOT="/tmp/root"
-		logmsg "I" "mount_root_rw" "" "Running from diags, mounting main rootfs on ${ROOT}"
-		mkdir -p "${ROOT}"
-		mount -o rw "/dev/mmcblk2p5" "${ROOT}"
-	else
-		logmsg "I" "mount_root_rw" "" "Mounting rootfs rw"
-		mount_rw
-	fi
+# PW1
+set_768_1024() {        # PW1-5.3.3
+#    SCREEN_X_RES=768   # 768 Confirmed
+#    SCREEN_Y_RES=1024  # 1024 Confirmed
+#    EIPS_X_RES=16      # 16 Confirmed
+#    EIPS_Y_RES=24      # 24 Confirmed
+    EIPS_MAXCHARS=48    # 0..47 Confirmed (47 not usable, 1/2 character)
+    EIPS_MAXLINES=42    # 0..41 Confirmed
+    EIPS_HALF=24
+    set_OSD
 }
 
-check_model()
-{
-	# Do the S/N dance...
-	kmodel="$(cut -c3-4 /proc/usid)"
-	case "${kmodel}" in
+# KT2, KT3
+set_608_800() {         # KT3-5.8.5
+#    SCREEN_X_RES=608   # 608 Confirmed
+#    SCREEN_Y_RES=800   # 800 Confirmed
+#    EIPS_X_RES=16      # 16 Confirmed
+#    EIPS_Y_RES=24      # 24 Confirmed
+    EIPS_MAXCHARS=37    # 0..36 Confirmed (0 not usable, 1/2 character)
+    EIPS_MAXLINES=33    # 0..32 Confirmed (0 not usable, 1/2 character)
+    EIPS_HALF=18
+    EIPS_OFF=1
+    set_OSD
+}
+
+# on-screen (OSD) message handler
+print_centered() {
+local S
+local i j k l               # Fortran
+    # Portrait mode: eips col row string
+    eips -h 0 "${EIPS_POS}" "${CLEAR}" 
+    # Meanwhile
+    l=$(($EIPS_MAXCHARS - $EIPS_OFF))       # Maximum string
+    S=${1}                                  # Passed string
+    S=${S:0:$l}                             # Trim the length
+    i=${#S}                                 # 67
+    j=$((i / 2))            # Truncated     # 33
+    k=$(($i - ($j * 2)))    # 0 or 1        # 1
+    j=$(($j + $k))                          # 34
+    l=$(($EIPS_HALF - $j + $EIPS_OFF))      # 0
+    [ $l -lt 0 ] && l=0 || true             # skip lh segfault
+    # Ah, what was it this was supposed to do? Oh, print something.
+    eips -h "$l" "${EIPS_POS}" "${S}"
+    # Set up for next line
+    EIPS_POS=$((${EIPS_POS} + 1))
+    [ ${EIPS_POS} -gt ${EIPS_BOT} ] && EIPS_POS=${EIPS_TOP} || true
+}
+
+logmsg() {
+    f_log "${1}" "${LOG_DOMAIN}" "${2}" "${3}" "${4}"
+}
+
+# Get root file system read/write state
+root_rw() {
+    set $(cat /proc/mounts | head -n 1)
+    [ "x${4}" == 'xrw' ] && return 0 || return 1
+}
+
+# Get root file system device
+get_root() {
+    set $(mount / 2>&1 | head -n 1) # Not possible to be un-mounted
+    printf '%s' ${2}                # error message contains device name
+}
+
+mount_root_rw() {
+local rdev
+    rdev=$(get_root)
+    print_centered "OS Root $rdev"
+    case "$rdev" in
+        "/dev/mmcblk0p1" | "/dev/mmcblk2p5" )
+            if root_rw ; then
+                logmsg "I" "mount_root_rw" "" "Running from Main, $rdev already rw"
+            else
+                mntroot rw
+                logmsg "I" "mount_root_rw" "" "Running from Main, re-mounting $rdev rw"
+            fi
+            print_centered " Main OS $rdev "
+        ;;
+
+        "/dev/mmcblk0p2" )
+            ROOT='/var/tmp/main'    # Do not mount into root's home directory
+            mkdir -p "${ROOT}"
+            # touch screen model, prior to KOA2, running from "Diags" partition
+            mount -o rw '/dev/mmcblk0p1' "${ROOT}" 
+            logmsg "I" "mount_root_rw" "" "Running from $rdev, mounting /dev/mmcblk0p1 rw"
+            print_centered " Diag OS ${1} "
+         ;;
+
+        * ) # in which case, punt - Should never reach this point
+            logmsg "I" "mount_root_rw" "" "Unrecognized device: $rdev, aborting"
+            print_centered " ABORT, OS root $rdev not recognized "
+            exit 1
+        ;;
+    esac
+}
+
+# Presume this is a touch screen device with default screen and never fail
+check_model() {
+    # use a full de-code of usid
+    kseries="$(cut -c1-2 /proc/usid)"
+    case "${kseries}" in
+        "B1" )
+            : # Nothing to see here, just move along.
+        ;;
+
+        "B0" | "90" )
+            kmodel="$(cut -c3-4 /proc/usid)"
+            case "${kmodel}" in
 		"24" | "1B" | "1D" | "1F" | "1C" | "20" )
 			# PaperWhite 1 (2012)
-			IS_PW="true"
+			set_768_1024
 		;;
 		"D4" | "5A" | "D5" | "D6" | "D7" | "D8" | "F2" | "17" | "60" | "F4" | "F9" | "62" | "61" | "5F" )
 			# PaperWhite 2 (2013)
-			IS_PW="true"
-			IS_PW2="true"
+			set_768_1024
 		;;
 		"13" | "54" | "2A" | "4F" | "52" | "53" )
 			# Voyage...
-			IS_KV="true"
+			set_1072_1448
 		;;
 		"C6" | "DD" )
 			# KT2...
-			IS_TOUCH="true"
-			IS_KT2="true"
+			set_608_800
 		;;
 		"0F" | "11" | "10" | "12" )
 			# Touch
 			IS_TOUCH="true"
+			# Default screen settings
 		;;
 		* )
-			# Try the new device ID scheme...
-			kmodel="$(cut -c4-6 /proc/usid)"
-			case "${kmodel}" in
-				"0G1" | "0G2" | "0G4" | "0G5" | "0G6" | "0G7" | "0KB" | "0KC" | "0KD" | "0KE" | "0KF" | "0KG" )
-					# PW3...
-					IS_PW3="true"
-				;;
-				"0GC" | "0GD" | "0GR" | "0GS" | "0GT" | "0GU" )
-					# Oasis...
-					IS_KOA="true"
-				;;
-				"0DU" | "0K9" | "0KA" )
-					# KT3...
-					IS_KT3="true"
-				;;
-				* )
-					# Fallback... We shouldn't ever hit that.
-					IS_TOUCH="true"
-				;;
-			esac
+                    IS_TOUCH="true"         # Default and message
+                    logmsg "I" "Check Model 3..4" "" "Unknown device code: ${kseries}${kmodel}"
+                    # Default screen settings
+                    print_centered " Model 3..4 K5 defaulted "
+                ;;
+            esac
+        ;;
+
+        "G0" )
+            kmodel="$(cut -c3-6 /proc/usid)"
+            case "${kmodel}" in
+                "90G1" | "90G2" | "90G4" | "90G5" | "90G6" | "90G7" | "90KB" | "90KC" | "90KD" | "90KE" | "90KF" | "90LK" | "90LL" )
+                    # PW3...
+                    set_1072_1448
+                ;;
+                "B0GC" | "B0GD" | "B0GR" | "B0GS" | "B0GT" | "B0GU" )
+                    # Oasis...
+                    set_1072_1448
+                ;;
+                "00DU" | "00K9" | "00KA" )
+                    # KT3...
+                    set_608_800
+                ;;
+                "00P8" | "00S1" | "00SA" )
+                    # KOA2
+                    set_1264_1680
+                    HAS_DIAGS='false'
+                ;;
+                * )
+                    IS_TOUCH="true"         # Default and message
+                    logmsg "I" "Check Model 3..6" "" "Unknown device code: ${kseries}${kmodel}"
+                    # Default screen settings
+                    print_centered " Model 3..6 K5 defaulted "
 		;;
-	esac
-
-	# Use the proper constants for our screen...
-	if [ "${IS_KV}" == "true" -o "${IS_PW3}" == "true" -o "${IS_KOA}" == "true" ] ; then
-		SCREEN_X_RES=1088
-		SCREEN_Y_RES=1448
-		EIPS_X_RES=16
-		EIPS_Y_RES=24
-	elif [ "${IS_PW}" == "true" ] ; then
-		SCREEN_X_RES=768
-		SCREEN_Y_RES=1024
-		EIPS_X_RES=16
-		EIPS_Y_RES=24
-	elif [ "${IS_KT2}" == "true" -o "${IS_KT3}" == "true" ] ; then
-		SCREEN_X_RES=608
-		SCREEN_Y_RES=800
-		EIPS_X_RES=16
-		EIPS_Y_RES=24
-	else
-		SCREEN_X_RES=600
-		SCREEN_Y_RES=800
-		EIPS_X_RES=12
-		EIPS_Y_RES=20
-	fi
-	EIPS_MAXCHARS="$((${SCREEN_X_RES} / ${EIPS_X_RES}))"
-	EIPS_MAXLINES="$((${SCREEN_Y_RES} / ${EIPS_Y_RES}))"
+            esac
+        ;;
+        *)
+            IS_TOUCH="true"         # Default and message
+            logmsg "I" "Check Model 1..2" "" "Unknown device code: ${kseries}${kmodel}"
+            # Default screen settings
+            print_centered " Model unknown K5 defaulted "
+        ;;
+    esac
+    set_OSD
+    return 0
 }
 
-check_version()
-{
-	# The great version check!
-	kpver="$(grep '^Kindle 5' ${ROOT}/etc/prettyversion.txt 2>&1)"
-	if [ $? -ne 0 ] ; then
-		logmsg "W" "check_version" "" "couldn't detect the kindle major version!"
-		# We're in a bit of a pickle... Make an educated guess...
-		if [ "${IS_PW2}" == "true" ] ; then
-			# The PW2 shipped on 5.4.0 ;)
-			logmsg "I" "check_version" "" "PW2 detected, assuming >= 5.4"
-			K5_ATLEAST_54="true"
-		elif [ "${IS_KV}" == "true" ] ; then
-			# The KV shipped on 5.5.0 ;)
-			logmsg "I" "check_version" "" "KV detected, assuming >= 5.4"
-			K5_ATLEAST_54="true"
-		elif [ "${IS_KT2}" == "true" ] ; then
-			# The KT2 shipped on 5.6.0 ;)
-			logmsg "I" "check_version" "" "KT2 detected, assuming >= 5.4"
-			K5_ATLEAST_54="true"
-		elif [ "${IS_PW3}" == "true" ] ; then
-			# The PW3 shipped on 5.6.1 ;)
-			logmsg "I" "check_version" "" "PW3 detected, assuming >= 5.4"
-			K5_ATLEAST_54="true"
-		elif [ "${IS_KOA}" == "true" ] ; then
-			# The Oasis shipped on 5.7.1.1 ;)
-			logmsg "I" "check_version" "" "Oasis detected, assuming >= 5.4"
-			K5_ATLEAST_54="true"
-		elif [ "${IS_KT3}" == "true" ] ; then
-			# The KT3 shipped on >= 5.7.x ;)
-			logmsg "I" "check_version" "" "KT3 detected, assuming >= 5.4"
-			K5_ATLEAST_54="true"
-		else
-			# Poor man's last resort trick. See if we can find a new feature of FW 5.4 on the FS...
-			if [ -f "${ROOT}/etc/upstart/contentpackd.conf" ] ; then
-				logmsg "I" "check_version" "" "found a fw >= 5.4 feature"
-				K5_ATLEAST_54="true"
-			fi
-			# NOTE: Alternative checks:
-			# -x ${ROOT}/usr/bin/contentpackd
-			# -f ${ROOT}/opt/amazon/ebook/lib/VocabBuilderSDK.jar
-			# -f ${ROOT}/opt/amazon/ebook/booklet/VocabBuilderBooklet.jar
-		fi
-	else
-		# Weeee, the great case switch!
-		khver="$(echo ${kpver} | sed -n -r 's/^(Kindle)([[:blank:]]*)([[:digit:].]*)(.*?)$/\3/p')"
-		case "${khver}" in
-			5.0* )
-				K5_ATLEAST_54="false"
-			;;
-			5.1* )
-				K5_ATLEAST_54="false"
-			;;
-			5.2* )
-				K5_ATLEAST_54="false"
-			;;
-			5.3* )
-				K5_ATLEAST_54="false"
-			;;
-			5.4* )
-				K5_ATLEAST_54="true"
-			;;
-			5.5* )
-				K5_ATLEAST_54="true"
-			;;
-			5.6* )
-				K5_ATLEAST_54="true"
-			;;
-			5.7* )
-				K5_ATLEAST_54="true"
-			;;
-			5.8* )
-				K5_ATLEAST_54="true"
-			;;
-			5.* )
-				# Assume newer, just to be safe ;)
-				K5_ATLEAST_54="true"
-			;;
-			* )
-				# Given the previous checks, this shouldn't be reachable, but cover all bases anyway...
-				logmsg "W" "check_version" "" "couldn't detect the kindle version!"
-				# Poor man's last resort trick. See if we can find a new feature of FW 5.4 on the FS...
-				if [ -f "${ROOT}/etc/upstart/contentpackd.conf" ] ; then
-					logmsg "I" "check_version" "" "found a fw >= 5.4 feature"
-					K5_ATLEAST_54="true"
-				fi
-			;;
-		esac
-	fi
+# Controls the addition of an empty file at root of system, defaults to doit.
+check_version() {
+local l=$(cat /etc/prettyversion.txt)
+    [ "${#l}" > 6 ] && set "${l}" || return 1
+    kver=$(echo "${2}" | cut -c1-3)
+    case ${kver} in
+        5.0* | 5.1* | 5.2* | 5.3* )
+            K5_ATLEAST_54='false' # A PW1 also runs (ran) a 5.2.x and 5.3.x firmware
+        ;;
+        * )
+            K5_ATLEAST_54='true'
+        ;;
+    esac
+    return 0
 }
 
-print_jb_install_feedback()
-{
-	# We need to know our model
-	check_model
-	# Prepare our stuff...
-	kh_eips_string="**** JAILBREAK ****"
-
-	# And finally, show our message, centered on the bottom of the screen
-	eips $(((${EIPS_MAXCHARS} - ${#kh_eips_string}) / 2)) $((${EIPS_MAXLINES} - 2)) "${kh_eips_string}"
+MD5=''
+INST=''
+get_md5() {
+local r
+    set $(md5sum "${1}" 2>/dev/nul) ; r=$? ; echo "${1}" ; return $r
 }
 
-print_fw54_exec_install_feedback()
-{
-	# We need to know our model
-	check_model
-	# Prepare our stuff...
-	kh_eips_string="**** FW 5.4 JB ****"
-
-	# And finally, show our message, centered on the bottom of the screen
-	eips $(((${EIPS_MAXCHARS} - ${#kh_eips_string}) / 2)) $((${EIPS_MAXLINES} - 2)) "${kh_eips_string}"
+get_free() {
+    set $(df -k /var/local)
+    # 0.5Mbyte is just a WAFG
+    [ ${11} -lt 512 ] && return 1 || return 0
 }
 
-print_mkk_dev_keystore_feedback()
-{
-	# We need to know our model
-	check_model
-	# Prepare our stuff... Print an extra warning if we failed to copy the keys...
-	if [ "${VARLOCAL_OOS}" == "true" ] ; then
-		kh_eips_string="**** WARNING: FAILED TO COPY MKK KEYS ****"
-	else
-		kh_eips_string="**** MKK KEYS **** "
-	fi
+###
+#   Installers when callled:
+#       Source is known to exist
+#       Destination is known to be writable
+#       Space is known to be available on /var/local
+#   With random exceptions thrown it to keep the reader awake
+###
 
-	# And finally, show our message, centered on the bottom of the screen
-	eips $(((${EIPS_MAXCHARS} - ${#kh_eips_string}) / 2)) $((${EIPS_MAXLINES} - 2)) "${kh_eips_string}"
-}
-
-print_mkk_kindlet_jb_feedback()
-{
-	# We need to know our model
-	check_model
-	# Prepare our stuff...
-	kh_eips_string="**** MKK K JB **** "
-
-	# And finally, show our message, centered on the bottom of the screen
-	eips $(((${EIPS_MAXCHARS} - ${#kh_eips_string}) / 2)) $((${EIPS_MAXLINES} - 2)) "${kh_eips_string}"
-}
-
-print_gandalf_feedback()
-{
-	# We need to know our model
-	check_model
-	# Prepare our stuff...
-	kh_eips_string=" **** GANDALF **** "
-
-	# And finally, show our message, centered on the bottom of the screen
-	eips $(((${EIPS_MAXCHARS} - ${#kh_eips_string}) / 2)) $((${EIPS_MAXLINES} - 2)) "${kh_eips_string}"
-}
-
-print_rp_feedback()
-{
-	# We need to know our model
-	check_model
-	# Prepare our stuff...
-	kh_eips_string="   **** RP ****    "
-
-	# And finally, show our message, centered on the bottom of the screen
-	eips $(((${EIPS_MAXCHARS} - ${#kh_eips_string}) / 2)) $((${EIPS_MAXLINES} - 2)) "${kh_eips_string}"
-}
-
-print_crp_feedback()
-{
-	# We need to know our model
-	check_model
-	# Prepare our stuff...
-	kh_eips_string="   **** CRP ****   "
-
-	# And finally, show our message, centered on the bottom of the screen
-	eips $(((${EIPS_MAXCHARS} - ${#kh_eips_string}) / 2)) $((${EIPS_MAXLINES} - 2)) "${kh_eips_string}"
-}
-
-print_dispatch_feedback()
-{
-	# We need to know our model
-	check_model
-	# Prepare our stuff...
-	kh_eips_string="**** DISPATCH **** "
-
-	# And finally, show our message, centered on the bottom of the screen
-	eips $(((${EIPS_MAXCHARS} - ${#kh_eips_string}) / 2)) $((${EIPS_MAXLINES} - 2)) "${kh_eips_string}"
-}
-
-print_bridge_job_feedback()
-{
-	# We need to know our model
-	check_model
-	# Prepare our stuff...
-	kh_eips_string=" **** BRIDGE+ **** "
-
-	# And finally, show our message, centered on the bottom of the screen
-	eips $(((${EIPS_MAXCHARS} - ${#kh_eips_string}) / 2)) $((${EIPS_MAXLINES} - 2)) "${kh_eips_string}"
-}
-
-install_touch_update_key()
-{
-	mount_root_rw
-	logmsg "I" "install_touch_update_key" "" "Copying the jailbreak updater key"
-	cat > "${ROOT}/etc/uks/pubdevkey01.pem" << EOF
+install_touch_update_key() {
+    local FRM="${psMKK}/pubdebkey01.pem"
+    local TOO="${ROOT}/etc/uks/pubdevkey01.pem"
+    logmsg "I" "install_touch_update_key" "" "Copying the jailbreak updater key"
+    cat > "${FRM}" << EOF
 -----BEGIN PUBLIC KEY-----
 MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDJn1jWU+xxVv/eRKfCPR9e47lP
 WN2rH33z9QbfnqmCxBRLP6mMjGy6APyycQXg3nPi5fcb75alZo+Oh012HpMe9Lnp
@@ -343,222 +307,292 @@ eEgloIdm1E4LOsyrz4kttQtGRlzCErmBGt6+cAVEV86y2phOJ3mLk0Ek9UQXbIUf
 rvyJnS2MKLG2cczjlQIDAQAB
 -----END PUBLIC KEY-----
 EOF
-	# Harmonize permissions
-	chown root:root "${ROOT}/etc/uks/pubdevkey01.pem"
-	chmod 0644 "${ROOT}/etc/uks/pubdevkey01.pem"
-	mount_ro
-
-	# Show some feedback
-	print_jb_install_feedback
+    if install -D -u root -g root -m 0644 ${FRM} ${TOO} 2>/dev/null ; then
+        print_centered " JAILBREAK "
+    else
+        logmsg "W" "install_touch_update_key" "" "Install failed"
+        print_centered " JB Failed "
+    fi
 }
 
-install_fw54_exec_userstore_flag()
-{
-	# Make sure we're on FW >= 5.4...
-	check_model
-	check_version
-
-	if [ "${K5_ATLEAST_54}" == "true" ] ; then
-		mount_root_rw
-		logmsg "I" "install_fw54_exec_userstore_flag" "" "Creating the userstore exec flag file"
-		touch "${ROOT}/MNTUS_EXEC"
-		mount_ro
-
-		# Show some feedback
-		print_fw54_exec_install_feedback
-	fi
+install_fw54_exec_userstore_flag() {
+    # Make sure we're on FW >= 5.4...
+    if [ "x${K5_ATLEAST_54}" == "xtrue" ] ; then
+        logmsg "I" "install_fw54_exec_userstore_flag" "" "Creating exec flag file"
+        touch "${ROOT}/MNTUS_EXEC" 2>/dev/null
+        print_centered " FW Execute Flag "
+    fi
 }
 
-install_mkk_dev_keystore()
-{
-	logmsg "I" "install_mkk_dev_keystore" "" "Copying the kindlet keystore"
-	# We shouldn't need to do anything specific to read/write /var/local
-	if [ "$(df -k /var/local | awk '$3 ~ /[0-9]+/ { print $4 }')" -lt "512" ] ; then
-		# Hu ho... Keep track of this...
-		VARLOCAL_OOS="true"
-		logmsg "W" "install_mkk_dev_keystore" "" "Failed to copy the kindlet keystore: not enough space left on device"
-	else
-		cp -f "${MKK_PERSISTENT_STORAGE}/developer.keystore" "/var/local/java/keystore/developer.keystore"
-	fi
+install_mkk_dev_keystore() {
+    local FRM="${psMKK}/developer.keystore"
+    local TOO="${ROOT}/var/local/java/keystore/developer.keystore"
+    logmsg "I" "install_mkk_dev_keystore" "" "Copying the kindlet keystore"
 
-	# Show some feedback
-	print_mkk_dev_keystore_feedback
+    if install -D -o framework -g javauser -m 0644 ${FRM} ${TOO} 2>/dev/null ; then
+        print_centered " MKK KEYS "
+    else
+        logmsg "W" "install_mkk_dev_keystore" "" "Install failed"
+        print_centered " FAILED TO COPY MKK KEYS "
+    fi
 }
 
-install_mkk_kindlet_jb()
-{
-	mount_root_rw
-	logmsg "I" "install_mkk_kindlet_jb" "" "Copying the kindlet jailbreak"
-	cp -f "${MKK_PERSISTENT_STORAGE}/json_simple-1.1.jar" "${ROOT}/opt/amazon/ebook/lib/json_simple-1.1.jar"
-	chmod 0664 "${ROOT}/opt/amazon/ebook/lib/json_simple-1.1.jar"
-	mount_ro
+install_mkk_kindlet_jb() {
+    local FRM="${psMKK}/json_simple-1.1.jar"
+    local TOO="${ROOT}/opt/amazon/ebook/lib/json_simple-1.1.jar"
+    logmsg "I" "install_mkk_kindlet_jb" "" "Copying the kindlet jailbreak"
 
-	# Show some feedback
-	print_mkk_kindlet_jb_feedback
+    if install -D -o root -g root -m 0644 "${FRM}" "${TOO}" 2>/dev/null ; then
+        print_centered " MKK K JB "
+    else
+        logmsg "W" "install_mkk_kindlet_jb" "" "Install failed"
+        print_centered " MKK K JB Failed "
+    fi
 }
 
-setup_gandalf()
-{
-	logmsg "I" "setup_gandalf" "" "Setting up gandalf... you shall not pass!"
-	chmod a+x "${MKK_PERSISTENT_STORAGE}/gandalf"
-	chmod +s "${MKK_PERSISTENT_STORAGE}/gandalf"
-	ln -sf "${MKK_PERSISTENT_STORAGE}/gandalf" "${MKK_PERSISTENT_STORAGE}/su"
-
-	# Show some feedback
-	print_gandalf_feedback
+setup_gandalf() {
+    logmsg "I" "setup_gandalf" "" "Setting up gandalf... you shall not pass!"
+    chmod a+x "${psMKK}/gandalf"
+    chmod +s "${psMKK}/gandalf"
+    ln -sf "${psMKK}/gandalf" "${psMKK}/su"
+    print_centered " GANDALF "
 }
 
-install_rp()
-{
-	mount_root_rw
-	logmsg "I" "install_rp" "" "Copying the RP"
-	cp -f "${RP_PERSISTENT_STORAGE}/debrick.conf" "${ROOT}/etc/upstart/debrick.conf"
-	chmod 0664 "${ROOT}/etc/upstart/debrick.conf"
-	cp -f "${RP_PERSISTENT_STORAGE}/debrick" "${ROOT}/etc/upstart/debrick"
-	chmod 0755 "${ROOT}/etc/upstart/debrick"
-	mount_ro
-
-	# Show some feedback
-	print_rp_feedback
+install_dispatch() {
+    local FRM="${psMKK}/dispatch.sh"
+    local TOO="${ROOT}/usr/bin/logThis.sh"
+    logmsg "I" "install_dispatch" "" "Copying the dispatch script"
+    if install -D -o root -g root -m 0755 "${FRM}" "${TOO}" 2>/dev/null ; then
+        print_centered " DISPATCH "
+    else
+        logmsg "W" "install_dispatch" "" "Dispatch copy failed"
+        print_centered " Failed dispatch install "
+    fi
 }
 
-install_crp()
-{
-	mount_root_rw
-	logmsg "I" "install_crp" "" "Copying the CRP"
-	cp -f "${RP_PERSISTENT_STORAGE}/cowardsdebrick.conf" "${ROOT}/etc/upstart/cowardsdebrick.conf"
-	chmod 0664 "${ROOT}/etc/upstart/cowardsdebrick.conf"
-	# My version of CRP doesn't use a separate script ;)
-	if [ -f "${RP_PERSISTENT_STORAGE}/cowardsdebrick" ] ; then
-		cp -f "${RP_PERSISTENT_STORAGE}/cowardsdebrick" "${ROOT}/etc/upstart/cowardsdebrick"
-		chmod 0755 "${ROOT}/etc/upstart/cowardsdebrick"
-	fi
-	mount_ro
-
-	# Show some feedback
-	print_crp_feedback
+install_bridge_job() {
+    local FRM="${psMKK}/bridge.conf"
+    local TOO="${ROOT}/etc/upstart/bridge.conf"
+    logmsg "I" "install_bridge_job" "" "Copying the bridge job"
+    if install -D -o root -g root -m 0755 "${FRM}" "${TOO}" 2>/dev/null ; then
+        print_centered " BRIDGE "
+    else
+        logmsg "W" "install_bridge_job" "" "Installation failed"
+        print_centered " Bridge install failed "
+    fi
 }
 
-install_dispatch()
-{
-	mount_root_rw
-	logmsg "I" "install_dispatch" "" "Copying the dispatch script"
-	cp -f "${MKK_PERSISTENT_STORAGE}/dispatch.sh" "${ROOT}/usr/bin/logThis.sh"
-	chmod 0755 "${ROOT}/usr/bin/logThis.sh"
-	mount_ro
-
-	# Show some feedback
-	print_dispatch_feedback
+clean_up() {
+    # Unmount main rootfs if we're on diags...
+    if [ -n "${ROOT}" ] ; then
+        logmsg "I" "clean_up" "" "Unmounting ${ROOT} rootfs"
+        umount "${ROOT}" 2>/dev/null
+    else
+        # Make the main rootfs ro again
+        mount -o remount,ro / 2>/dev/null
+    fi
+    print_centered "  Bridge $VER Completed  "
 }
 
-install_bridge_job()
-{
-	mount_root_rw
-	logmsg "I" "install_bridge_job" "" "Copying the bridge job"
-	cp -f "${MKK_PERSISTENT_STORAGE}/bridge.conf" "${ROOT}/etc/upstart/bridge.conf"
-	chmod 0664 "${ROOT}/etc/upstart/bridge.conf"
-	mount_ro
+### Make the rootfs writable, since that is the whole point of this script.
+mount_root_rw   # allows this script to be run from diags, prior to KOA2
 
-	# Show some feedback
-	print_bridge_job_feedback
-}
+### Setup the device specifics.
+check_model     # also sets up the OSD literals
+check_version   # defaults to installing the flag file name
 
-clean_up()
-{
-	# Unmount main rootfs if we're on diags...
-	if [ -n "${ROOT}" ] ; then
-		logmsg "I" "clean_up" "" "Unmounting main rootfs"
-		umount "${ROOT}"
-	fi
-}
+### Announce
+print_centered " === Bridge  $VER === "
 
-# Start with the userstore exec flag on FW >= 5.4 (so that the last eips print shown will make sense)
-if [ ! -f "${ROOT}/MNTUS_EXEC" ] ; then
-	install_fw54_exec_userstore_flag
-fi
+# Start with the userstore exec flag on FW >= 5.4 
+# (so that the last eips print shown will make sense)
+[ ! -f "${ROOT}/MNTUS_EXEC" ] && install_fw54_exec_userstore_flag || true
 
-# Check if we need to do something with the OTA pubkey
+### Handle our OTA update key - install or re-install as required
 if [ ! -f "${ROOT}/etc/uks/pubdevkey01.pem" ] ; then
-	# No jailbreak key, install it
-	install_touch_update_key
+    # No jailbreak key, install it
+    install_touch_update_key
 else
-	# Jailbreak key found... Check it.
-        if [ "$(md5sum "${ROOT}/etc/uks/pubdevkey01.pem" | awk '{ print $1; }')" != "7130ce39bb3596c5067cabb377c7a9ed" ] ; then
-		# Unknown (?!) jailbreak key, install it
-		install_touch_update_key
-	fi
-	if [ ! -O "${ROOT}/etc/uks/pubdevkey01.pem" ] ; then
-		# Not our own? Make it so!
-		install_touch_update_key
-	fi
+    # Jailbreak key found... Check it.
+    if MD5=$(get_md5 "${ROOT}/etc/uks/pubdevkey01.pem") ; then
+        if [ "${MD5}" != "7130ce39bb3596c5067cabb377c7a9ed" ] ; then
+            # Unknown (?!) jailbreak key, re-install it
+            print_centered " Replacing device key "
+            install_touch_update_key
+        else
+            if [ ! -O "${ROOT}/etc/uks/pubdevkey01.pem" ] ; then
+                # Not our own? Make it so!
+                print_centered " Fixing ownership of dev key "
+                chown root:root "${ROOT}/etc/uks/pubdevkey01.pem"
+                chmod 0644 "${ROOT}/etc/uks/pubdevkey01.pem"
+            else
+                print_centered " Device key checked "
+            fi
+        fi
+    else
+        print_centered " md5 pubdevkey failed "
+        # Since we could not check it, try a new one
+        install_touch_update_key
+    fi
 fi
 
-# Check if we need to do something with the Kindlet developer keystore
-if [ -f "${MKK_PERSISTENT_STORAGE}/developer.keystore" ] ; then
-	# No developer keystore, install it
-	if [ ! -f "/var/local/java/keystore/developer.keystore" ] ; then
-		install_mkk_dev_keystore
-	else
-		# Developer keystore doesn't match, install it
-		# NOTE: This *will* mess with real, official developer keystores. Not that we really care about it, but it should be noted ;).
-		if [ "$(md5sum "/var/local/java/keystore/developer.keystore" | awk '{ print $1; }')" != "$(md5sum "${MKK_PERSISTENT_STORAGE}/developer.keystore" | awk '{ print $1; }')" ] ; then
-			install_mkk_dev_keystore
-		fi
-	fi
+### Handle our Kindlet developer keystore - install re-install
+if [ -f "${psMKK}/developer.keystore" ] ; then
+    # Have a persistent copy available
+    if [ ! -f "${ROOT}/var/local/java/keystore/developer.keystore" ] ; then
+        # No developer keystore, install it
+	install_mkk_dev_keystore
+	print_centered " Java keystore installed "
+    else
+        # If developer keystore doesn't match, install ours.
+        # NOTE: This *will* mess with real, official developer keystores. 
+        # Not that we really care about it, but it should be noted ;).
+        if INST=$(get_md5 "/var/local/java/keystore/developer.keystore") ; then
+            if MD5=$(get_md5 "${psMKK}/developer.keystore") ; then
+                if [ "${MD5}" != "${INST}" ] ; then
+                    install_mkk_dev_keystore
+                    print_centered " Java keystore replaced "
+                else
+                    print_centered " Java keystore checked "
+                fi
+            else
+                print_centered " Replacing Java keystore 1 "
+                install_mkk_dev_keystore                
+            fi
+        else
+            print_centered " Replacing Java keystore 2 "
+            install_mkk_dev_keystore
+        fi
+    fi
+else
+    print_centered " info: Java keystore missing "
 fi
 
-# Check if we need to do something with the Kindlet JB
-if [ -f "${MKK_PERSISTENT_STORAGE}/json_simple-1.1.jar" ] ; then
-	# Kindlet JB doesn't match, install it
-	if [ "$(md5sum "${ROOT}/opt/amazon/ebook/lib/json_simple-1.1.jar" | awk '{ print $1; }')" != "$(md5sum "${MKK_PERSISTENT_STORAGE}/json_simple-1.1.jar" | awk '{ print $1; }')" ] ; then
-		install_mkk_kindlet_jb
+### Handle our Kindlet jail break - install re-install
+if [ -f "${psMKK}/json_simple-1.1.jar" ] ; then
+    # Have a persistent copy available
+    if [ ! -f "${ROOT}/opt/amazon/ebook/lib/json_simple-1.1.jar" ] ; then
+        install_mkk_kindlet_jb
+        print_centered " Installing kindlet JB "
+    else
+	# Check if unchanged
+	if INST=$(get_md5 "${ROOT}/opt/amazon/ebook/lib/json_simple-1.1.jar") ; then
+            if MD5=$(get_md5 "${psMKK}/json_simple-1.1.jar") ; then
+                if [ "${MD5}" != "${INST}" ] ; then
+                    install_mkk_kindlet_jb
+                    print_centered " Kindlet JB replaced "
+                else
+                    print_centered " Kindlet JB checked "
+                fi
+            else
+                print_centered " Replacing Kindlet jail break 1 "
+                install_mkk_kindlet_jb
+            fi
+        else
+            print_centered " Replacing Kindlet jail break 2 "
+            install_mkk_kindlet_jb
 	fi
+    fi
+else
+    print_centered " info: Kindlet jail break missing "
 fi
 
-# Check if we need to do something with Gandalf
-if [ -f "${MKK_PERSISTENT_STORAGE}/gandalf" ] ; then
-	# It's there, but not setup? Fix it!
-	if [ ! -x "${MKK_PERSISTENT_STORAGE}/su" ] ; then
-		setup_gandalf
-	fi
+### Check if we need to do something with Gandalf
+if [ -f "${psMKK}/gandalf" ] ; then
+    # It's there, check the setup
+    [ ! -x "${psMKK}/su" ] && setup_gandalf || true
+else
+    print_centered " Gandalf missing "
 fi
 
-# Check if we need to do something with the RP
-if [ -f "${RP_PERSISTENT_STORAGE}/debrick.conf" ] ; then
-	if [ ! -f "${ROOT}/etc/upstart/debrick.conf" ] ; then
-		install_rp
-	fi
+### Check if we need to do something with the RP upstart job
+if [ -f "${psRP}/debrick.conf" ] ; then
+    # have a persistent copy available
+    if [ ! -f "${ROOT}/etc/upstart/debrick.conf" ] ; then
+        install_rp
+    else # accept no substitutes
+        if INST=$(get_md5 "${ROOT}/etc/upstart/debrick.conf") ; then
+            if MD5=$(get_md5 "${psRP}/debrick.conf") ; then
+                [ "${MD5}" != "${INST}" ] && install_rp || true
+            fi
+        fi
+    fi
+else
+    print_centered "info: RP not found "
 fi
 
-# Check if we need to do something with the CRP
-if [ -f "${RP_PERSISTENT_STORAGE}/cowardsdebrick.conf" ] ; then
-	if [ ! -f "${ROOT}/etc/upstart/cowardsdebrick.conf" ] ; then
-		install_crp
-	fi
+### Check if we need to do something with the CRP upstart job
+if [ -f "${psRP}/cowardsdebrick.conf" ] ; then
+    # have a persistent copy available
+    if [ ! -f "${ROOT}/etc/upstart/cowardsdebrick.conf" ] ; then
+        install_crp
+    else # accept no substitutes
+        if INST=$(get_md5 "${ROOT}/etc/upstart/cowardsdebrick.conf") ; then
+            if MD5=$(get_md5 "${psRP}/cowardsdebrick.conf") ; then
+                [ "${MD5}" != "${INST}" ] && install_crp || true
+            fi
+        fi
+    fi
+else
+    print_centered "info: CRP not found "
 fi
 
-# Check if we need to do something with the dispatch script
-if [ -f "${MKK_PERSISTENT_STORAGE}/dispatch.sh" ] ; then
-	if [ ! -f "${ROOT}/usr/bin/logThis.sh" ] ; then
-		install_dispatch
-	else
-		# If it's not ours, install it
-		if ! grep "Dispatch" "${ROOT}/usr/bin/logThis.sh" > /dev/null 2>&1 ; then
-			install_dispatch
-		fi
+### Check if we need to do something with the dispatch script
+if [ -f "${psMKK}/dispatch.sh" ] ; then
+    if [ ! -f "${ROOT}/usr/bin/logThis.sh" ] ; then
+            install_dispatch
+            print_centered " Installing dispatcher "
+    else  # Test if ours and current version
+        if INST=$(get_md5 "${ROOT}/usr/bin/logThis.sh")  ; then
+            if MD5=$(get_md5 "${psMKK}/dispatch.sh")  ; then
+                if "${INST}" != "${MD5}" ] ; then
+                    install_dispatch
+                    print_centered " Dispatcher replaced "
+                else
+                    print_centered " Dispatcher checked "
+                fi
+            else
+                install_dispatch 
+                print_centered " Replacing dispatcher 1 "
+            fi
+        else
+            install_dispatch
+            print_centered " Replacing dispatcher 2 "
 	fi
+    fi
+else
+    print_centered " info: Dispatcher not found "
 fi
 
-# Check if we need to do something with the bridge job
-if [ -f "${MKK_PERSISTENT_STORAGE}/bridge.conf" ] ; then
-	if [ ! -f "${ROOT}/etc/upstart/bridge.conf" ] ; then
-		install_bridge_job
-	fi
+### Check if we need to do something with the bridge job
+if [ -f "${psMKK}/bridge.conf" ] ; then
+    if [ ! -f "${ROOT}/etc/upstart/bridge.conf" ] ; then
+        install_bridge_job
+        print_centered " Installing bridge job "
+    else
+        # Test if ours and current version
+        if MD5=$(get_md5 "${psMKK}/bridge.conf") ; then
+            if INST=$(get_md5 "${ROOT}/etc/upstart/bridge.conf") ; then
+                if [ "${MD5}" != "${INST}" ] ; then
+                    install_bridge_job
+                    print_centered " Bridge job replaced "
+                else
+                    print_centered " Bridge job checked "
+                fi
+            else
+                install_bridge_job
+                print_centered " Replacing bridge job 1 "
+            fi
+        else
+            install_bridge_job
+            print_centered " Teplacing bridge job 2 "
+        fi
+    fi
+else
+    print_centered " Bridge job not found "
 fi
 
-# Nothing to do or cleanup...
+### Return fs to ro and do other misc. stuff
 clean_up
-
-# And don't try anything fancier, the userstore isn't mounted yet...
 
 return 0
