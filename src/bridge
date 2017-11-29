@@ -140,8 +140,18 @@ root_rw() {
 
 # Get root file system device
 get_root() {
-    set $(mount / 2>&1 | head -n 1) # Not possible to be un-mounted
-    printf '%s' ${2}                # error message contains device name
+    if [ "x$HAS_DIAGS" == 'xfalse' ] ; then
+        if [ -f "/usr/sbin/rdev" ] && [ -x "/usr/sbin/rdev" ] ; then
+            set $(rdev) 
+            printf '%s' ${1}
+        else
+            # if rdev goes away, set to KOA2 default
+            printf '%s' '/dev/mmcblk2p5'
+        fi
+    else
+        set $(mount / 2>&1 | head -n 1) # Not possible to be un-mounted
+        printf '%s' ${2}                # error message contains device name
+    fi
 }
 
 mount_root_rw() {
@@ -393,12 +403,12 @@ clean_up() {
     print_centered "  Bridge $VER Completed  "
 }
 
-### Make the rootfs writable, since that is the whole point of this script.
-mount_root_rw   # allows this script to be run from diags, prior to KOA2
-
 ### Setup the device specifics.
 check_model     # also sets up the OSD literals
 check_version   # defaults to installing the flag file name
+
+### Make the rootfs writable, since that is the whole point of this script.
+mount_root_rw   # allows this script to be run from diags, prior to KOA2
 
 ### Announce
 print_centered " === Bridge  $VER === "
